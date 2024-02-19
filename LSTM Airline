@@ -1,0 +1,75 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+from sklearn.preprocessing import MinMaxScaler
+
+# Load the months file to determine the forecast horizon
+months_df = pd.read_excel('Months.xlsx')
+forecast_horizon = len(months_df)  # Assuming this file has one row per month to forecast
+
+# Load the airline passengers dataset
+df = pd.read_csv('airline-passengers.csv', usecols=[1])
+
+# Normalize the dataset
+scaler = MinMaxScaler(feature_range=(0, 1))
+df_scaled = scaler.fit_transform(df)
+
+# Prepare the data for LSTM model with a larger look-back window
+look_back = 12  # Increased look-back window to capture more historical data
+def create_dataset(data, look_back=1):
+    X, Y = [], []
+    for i in range(len(data)-look_back-1):
+        a = data[i:(i+look_back), 0]
+        X.append(a)
+        Y.append(data[i + look_back, 0])
+    return np.array(X), np.array(Y)
+
+X, Y = create_dataset(df_scaled, look_back)
+
+# Reshape input to be [samples, time steps, features]
+X = np.reshape(X, (X.shape[0], look_back, 1))
+
+# Build the LSTM model with additional layers
+model = Sequential()
+model.add(LSTM(50, return_sequences=True, input_shape=(look_back, 1)))
+model.add(LSTM(50, return_sequences=True))
+model.add(LSTM(50))
+model.add(Dense(1))
+model.compile(loss='mean_squared_error', optimizer='adam')
+
+# Fit the model
+epochs = 200  # Increased number of epochs
+model.fit(X, Y, epochs=epochs, batch_size=32, verbose=1)
+
+# Forecast future values using the model
+def forecast_future(model, last_known_data, steps):
+    forecast = last_known_data
+    predictions = []
+    for _ in range(steps):
+        pred = model.predict(forecast.reshape(1, look_back, 1))
+        predictions.append(pred[0][0])
+        forecast = np.append(forecast[1:], pred)  # Use np.append to add the new prediction to the end
+    return np.array(predictions)
+
+# Use the last known data point(s) as a starting point for future predictions
+last_known_data = df_scaled[-look_back:]
+future_predictions_scaled = forecast_future(model, last_known_data, forecast_horizon)
+
+# Invert predictions to original scale
+future_predictions = scaler.inverse_transform(future_predictions_scaled.reshape(-1, 1))
+
+# Plot the original data and future predictions
+plt.figure(figsize=(15, 7))
+plt.plot(scaler.inverse_transform(df_scaled), label='Original Data')
+
+# Plot future predictions
+future_index = np.arange(len(df_scaled), len(df_scaled) + forecast_horizon)
+plt.plot(future_index, future_predictions, label='Future Predictions', marker='o')
+
+plt.title('Airline Passengers Prediction Including Future Months')
+plt.xlabel('Time (Months)')
+plt.ylabel('Number of Passengers')
+plt.legend()
+plt.show()
